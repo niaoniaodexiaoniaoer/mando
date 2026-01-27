@@ -70,6 +70,7 @@ app.get('/', (req, res) => {
 // =========================
 // Start server
 // =========================
-app.listen(PORT, () => {
-  console.log(`Backend is running at http://localhost:${PORT}`);
+app.listen(PORT, '127.0.0.1', () => {
+  console.log(`Backend is running at http://127.0.0.1:${PORT}`);
 });
+
