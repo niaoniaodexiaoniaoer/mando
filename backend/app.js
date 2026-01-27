@@ -33,3 +33,7 @@ app.use('/api', api);
 app.listen(PORT, () => {
   console.log(`Backend is running at http://localhost:${PORT}`);
 });
+
+app.get('/', (req, res) => {
+  res.type('text').send('Mando API is running. See /api/health');
+});
