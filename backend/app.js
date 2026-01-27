@@ -2,7 +2,6 @@ const express = require('express');
 const path = require('path');
 // 修改这一行，强制指向当前目录下的 .env
 require('dotenv').config({ path: path.join(__dirname, '.env') }); 
-
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 // ... 后面的代码不变
 const sqlite3 = require('sqlite3').verbose();
