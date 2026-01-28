@@ -7,7 +7,7 @@
 
     <main class="mo-content">
       <section v-if="currentStep === 'login'" class="mo-card">
-        <h2>人员签到</h2>
+        <h2>系统登录</h2>
         <div class="mo-form">
           <div class="field">
             <label>值班人员</label>
@@ -21,44 +21,24 @@
             <label>认证口令</label>
             <input type="password" v-model="loginForm.pass" class="mo-input" placeholder="默认 admin">
           </div>
-          <button @click="handleLogin" class="mo-btn primary">验证身份并获取位置</button>
+          <button @click="handleLogin" class="mo-btn primary">验证身份</button>
         </div>
-      </section>
-
-      <section v-if="currentStep === 'camera'" class="mo-card">
-        <h2>真人识别埋点</h2>
-        <div class="video-container">
-          <video ref="videoPlayer" autoplay playsinline class="mo-video"></video>
-        </div>
-        <button @click="captureAndSubmit" class="mo-btn success">立即拍摄并提交</button>
-      </section>
-
-      <section v-if="currentStep === 'result'" class="mo-card result">
-        <div class="success-icon">✓</div>
-        <h2>签到成功</h2>
-        <div class="detail-list">
-          <div class="item"><strong>人员:</strong> {{ loginForm.user }}</div>
-          <div class="item"><strong>时间:</strong> {{ checkinTime }}</div>
-          <div class="item"><strong>坐标:</strong> {{ location.lat.toFixed(4) }}, {{ location.lng.toFixed(4) }}</div>
-        </div>
-        <div class="mo-tags-section">
-          <h4>权限标签：</h4>
-          <div class="tag-container">
-            <span v-for="tag in userTags" :key="tag" class="mo-tag">{{ tag }}</span>
-          </div>
-        </div>
-        <img :src="finalPhoto" class="mo-photo" />
-        <button @click="goToWorkflow" class="mo-btn primary" style="margin-top:20px">进入工作台</button>
       </section>
 
       <section v-if="currentStep === 'workflow'" class="mo-card">
         <header class="workflow-header">
           <div class="user-status">
             <span class="status-dot"></span>
-            <strong>{{ loginForm.user }}</strong> (已签到)
+            <strong>{{ loginForm.user }}</strong>
           </div>
-          <button @click="handleLogout" class="logout-link">退出重启</button>
+          <button @click="handleLogout" class="logout-link">安全退出</button>
         </header>
+
+        <div class="mo-tags-section" style="border:none; padding:0; margin-bottom:20px;">
+          <div class="tag-container">
+            <span v-for="tag in userTags" :key="tag" class="mo-tag">{{ tag }}</span>
+          </div>
+        </div>
 
         <h2 style="text-align: left; margin-bottom: 20px;">任务选择</h2>
         <div class="workflow-grid">
@@ -80,6 +60,31 @@
           </div>
         </div>
       </section>
+
+      <section v-if="currentStep === 'camera'" class="mo-card">
+        <div class="workflow-header">
+           <span>当前任务：<strong>{{ activeTask }}</strong></span>
+           <button @click="currentStep = 'workflow'" class="logout-link" style="color:var(--primary)">取消</button>
+        </div>
+        <h2>真人识别埋点</h2>
+        <p style="font-size:12px; color:#666; margin-bottom:15px;">开始任务前，请完成现场拍照存证</p>
+        <div class="video-container">
+          <video ref="videoPlayer" autoplay playsinline class="mo-video"></video>
+        </div>
+        <button @click="captureAndSubmit" class="mo-btn success">立即拍摄并开始任务</button>
+      </section>
+
+      <section v-if="currentStep === 'result'" class="mo-card result">
+        <div class="success-icon">✓</div>
+        <h2>存证成功</h2>
+        <div class="detail-list">
+          <div class="item"><strong>人员:</strong> {{ loginForm.user }}</div>
+          <div class="item"><strong>任务:</strong> {{ activeTask }}</div>
+          <div class="item"><strong>坐标:</strong> {{ location.lat.toFixed(4) }}, {{ location.lng.toFixed(4) }}</div>
+        </div>
+        <img :src="finalPhoto" class="mo-photo" />
+        <button @click="currentStep = 'workflow'" class="mo-btn primary" style="margin-top:20px">返回工作台</button>
+      </section>
     </main>
   </div>
 </template>
@@ -89,6 +94,7 @@ import { ref, reactive, onMounted } from 'vue'
 
 // 状态控制
 const currentStep = ref('login')
+const activeTask = ref('')
 const loginForm = reactive({ user: '张三', pass: '' })
 const location = reactive({ lat: 0, lng: 0 })
 const deviceInfo = reactive({ os: '', browser: '' })
@@ -105,11 +111,13 @@ const USER_CONFIG = {
   '王五': { tags: ['科技园监控', '资产管理'] }
 }
 
-// 拦截逻辑：如果没有签到信息，强制回登录页
+// 登录拦截逻辑：利用 localStorage 实现持久化
 onMounted(() => {
-  const isAuth = sessionStorage.getItem('mando_authenticated')
-  if (!isAuth) {
-    currentStep.value = 'login'
+  const isAuth = localStorage.getItem('mando_auth')
+  if (isAuth === 'true') {
+    loginForm.user = localStorage.getItem('mando_user')
+    userTags.value = JSON.parse(localStorage.getItem('mando_tags') || '[]')
+    currentStep.value = 'workflow'
   }
 })
 
@@ -121,16 +129,34 @@ const getFingerprint = () => {
 
 const handleLogin = () => {
   if (loginForm.pass !== 'admin') return alert('口令错误')
+  
+  // 存储身份信息到本地
+  localStorage.setItem('mando_auth', 'true')
+  localStorage.setItem('mando_user', loginForm.user)
+  userTags.value = USER_CONFIG[loginForm.user].tags
+  localStorage.setItem('mando_tags', JSON.stringify(userTags.value))
+  
+  currentStep.value = 'workflow'
+}
+
+const handleLogout = () => {
+  localStorage.clear()
+  currentStep.value = 'login'
+  loginForm.pass = ''
+}
+
+// 点击任务：触发位置获取和摄像头
+const handleTask = (name) => {
+  activeTask.value = name
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       location.lat = pos.coords.latitude
       location.lng = pos.coords.longitude
       getFingerprint()
-      userTags.value = USER_CONFIG[loginForm.user].tags
       currentStep.value = 'camera'
       startCamera()
     },
-    () => alert('请授权位置信息，否则无法签到')
+    () => alert('请授权位置信息，否则无法开启任务')
   )
 }
 
@@ -156,31 +182,16 @@ const captureAndSubmit = async () => {
   try {
     const blob = await (await fetch(dataUrl)).blob()
     const fd = new FormData()
-    fd.append('photo', blob, 'chk.jpg')
-    fd.append('user_name', loginForm.user)
+    fd.append('photo', blob, 'task_checkin.jpg')
+    fd.append('user_name', `${loginForm.user}(${activeTask.value})`) // 记录具体任务签到
     fd.append('lat', location.lat); fd.append('lng', location.lng)
     fd.append('os', deviceInfo.os); fd.append('browser', deviceInfo.browser)
     fd.append('checkin_time', checkinTime.value)
     await fetch('/api/checkin', { method: 'POST', body: fd })
-    
-    // 标记为已认证
-    sessionStorage.setItem('mando_authenticated', 'true')
   } catch (err) { console.error('同步失败') }
 
   if (streamInstance) streamInstance.getTracks().forEach(t => t.stop())
   currentStep.value = 'result'
-}
-
-const goToWorkflow = () => { currentStep.value = 'workflow' }
-
-const handleLogout = () => {
-  sessionStorage.removeItem('mando_authenticated')
-  currentStep.value = 'login'
-  loginForm.pass = ''
-}
-
-const handleTask = (name) => {
-  alert(`流程跳转中：${name}\n(下一阶段将开发此表单)`)
 }
 </script>
 
@@ -195,18 +206,15 @@ body { margin: 0; background: var(--bg); font-family: -apple-system, sans-serif;
 .mo-btn.primary { background: var(--primary); color: white; }
 .mo-btn.success { background: var(--success); color: white; }
 
-/* 视频与照片 */
 .video-container { width: 100%; aspect-ratio: 3/4; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
 .mo-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .mo-photo { width: 100%; border-radius: 8px; margin-top: 15px; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
 
-/* 标签与详情 */
 .detail-list { background: #f9fafb; padding: 12px; border-radius: 8px; text-align: left; font-size: 14px; margin-bottom: 15px; }
 .mo-tags-section { border-top: 1px dashed #ddd; padding-top: 10px; text-align: left; }
 .tag-container { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .mo-tag { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
 
-/* Workflow 专属样式 */
 .workflow-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
 .user-status { font-size: 14px; display: flex; align-items: center; }
 .status-dot { width: 8px; height: 8px; background: var(--success); border-radius: 50%; margin-right: 6px; }
@@ -220,4 +228,5 @@ body { margin: 0; background: var(--bg); font-family: -apple-system, sans-serif;
 .flow-item:active { transform: scale(0.95); background: #f9fafb; }
 .flow-item .icon { font-size: 32px; }
 .flow-item span { font-weight: 600; color: var(--dark); font-size: 14px; }
+.success-icon { font-size: 40px; color: var(--success); text-align: center; }
 </style>
