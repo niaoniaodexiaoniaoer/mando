@@ -1,10 +1,10 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs'); // 新增：用于读取本地模板
+const fs = require('fs'); // 用于读取本地模板
 const sqlite3 = require('sqlite3').verbose();
 const multer = require('multer');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { PDFDocument } = require('pdf-lib'); // 新增：PDF处理核心库
+const { PDFDocument } = require('pdf-lib'); // PDF处理核心库
 require('dotenv').config({ path: path.join(__dirname, '.env') }); 
 
 const app = express();
@@ -32,14 +32,14 @@ db.serialize(() => {
         longitude REAL,
         device_os TEXT,
         browser TEXT,
-        pdf_url TEXT -- 新增列：存储签署后的PDF地址
+        pdf_url TEXT 
     )`);
 });
 
 const upload = multer({ storage: multer.memoryStorage() });
 app.use(express.json({ limit: '10mb' })); // 增大限制以接收签名图片数据
 
-// 3. 签到 API (保持不变)
+// 3. 签到 API
 app.post('/api/checkin', upload.single('photo'), async (req, res) => {
     try {
         const { user_name, lat, lng, os, browser, checkin_time } = req.body;
@@ -62,16 +62,17 @@ app.post('/api/checkin', upload.single('photo'), async (req, res) => {
             res.json({ message: 'success', id: this.lastID, url: photo_url });
         });
     } catch (error) {
+        console.error('签到失败:', error);
         res.status(500).json({ error: 'Server Internal Error' });
     }
 });
 
-// 4. 新增：签名并合成 PDF API
+// 4. 签名并合成 PDF API
 app.post('/api/save-signature', async (req, res) => {
     try {
         const { user, task, signatureBase64 } = req.body;
 
-        [cite_start]// A. 读取本地 PDF 模板 [cite: 114, 115]
+        // A. 读取本地 PDF 模板
         const templatePath = path.join(__dirname, 'assets', '技术安全交底告知书.pdf');
         const existingPdfBytes = fs.readFileSync(templatePath);
         const pdfDoc = await PDFDocument.load(existingPdfBytes);
@@ -80,11 +81,11 @@ app.post('/api/save-signature', async (req, res) => {
         const signatureImageBytes = Buffer.from(signatureBase64.split(',')[1], 'base64');
         const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
 
-        [cite_start]// C. 在第二页嵌入签名 [cite: 134]
+        // C. 在第二页嵌入签名
         const pages = pdfDoc.getPages();
         const secondPage = pages[1]; // 索引从0开始，1代表第二页
         
-        // 预设坐标 (x, y)，通常签名在右下角，你可以根据PDF实际大小调整
+        // 预设坐标 (x, y)，根据PDF实际大小调整
         secondPage.drawImage(signatureImage, {
             x: 400,
             y: 100,
@@ -108,7 +109,7 @@ app.post('/api/save-signature', async (req, res) => {
         
         res.json({ success: true, pdf_url });
     } catch (error) {
-        console.error('PDF合成错误:', error);
+        console.error('PDF合成错误:', error); 
         res.status(500).json({ error: 'PDF Generation Failed' });
     }
 });
