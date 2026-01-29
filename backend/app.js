@@ -1,16 +1,15 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs'); // 用于读取本地模板
+const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const multer = require('multer');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { PDFDocument } = require('pdf-lib'); // PDF处理核心库
+const { PDFDocument } = require('pdf-lib');
 require('dotenv').config({ path: path.join(__dirname, '.env') }); 
 
 const app = express();
 const PORT = 3000;
 
-// 1. R2 客户端配置
 const r2 = new S3Client({
     region: 'auto',
     endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -20,100 +19,125 @@ const r2 = new S3Client({
     },
 });
 
-// 2. 数据库初始化
 const db = new sqlite3.Database(path.join(__dirname, 'mando.db'));
 db.serialize(() => {
+    // 1. 原有签到表 (保持兼容)
     db.run(`CREATE TABLE IF NOT EXISTS checkin_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_name TEXT,
-        checkin_time TEXT,
-        photo_url TEXT,
-        latitude REAL,
-        longitude REAL,
-        device_os TEXT,
-        browser TEXT,
-        pdf_url TEXT 
+        user_name TEXT, checkin_time TEXT, photo_url TEXT,
+        latitude REAL, longitude REAL, device_os TEXT, browser TEXT, pdf_url TEXT 
+    )`);
+
+    // 2. 主工单表 (M&O 1.3 核心)
+    db.run(`CREATE TABLE IF NOT EXISTS work_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT, creator TEXT, assignee TEXT, status TEXT,
+        safety_pdf_url TEXT, summary_text TEXT, summary_photo_url TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // 3. 子任务明细表
+    db.run(`CREATE TABLE IF NOT EXISTS sub_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER, sub_name TEXT, status TEXT DEFAULT 'PENDING',
+        log_data TEXT, -- 存储 JSON: { photos: [], remark: "" }
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(order_id) REFERENCES work_orders(id)
     )`);
 });
 
 const upload = multer({ storage: multer.memoryStorage() });
-app.use(express.json({ limit: '10mb' })); // 增大限制以接收签名图片数据
+app.use(express.json({ limit: '10mb' }));
 
-// 3. 签到 API
-app.post('/api/checkin', upload.single('photo'), async (req, res) => {
-    try {
-        const { user_name, lat, lng, os, browser, checkin_time } = req.body;
-        const fileName = `mando_${Date.now()}.jpg`;
-
-        await r2.send(new PutObjectCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
-            Key: fileName,
-            Body: req.file.buffer,
-            ContentType: 'image/jpeg',
-        }));
-
-        const photo_url = `${process.env.R2_PUBLIC_URL}/${fileName}`;
-        const sql = `INSERT INTO checkin_logs 
-                     (user_name, photo_url, latitude, longitude, device_os, browser, checkin_time) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`;
+// --- API 1: 创建工单及初始化子任务 ---
+app.post('/api/work-orders/start', async (req, res) => {
+    const { type, creator, assignee, subTasks } = req.body; // subTasks 是数组 ['A楼', 'B楼'...]
+    
+    db.run(`INSERT INTO work_orders (type, creator, assignee, status) VALUES (?, ?, ?, 'SAFETY_CHECK')`, 
+    [type, creator, assignee], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        const orderId = this.lastID;
         
-        db.run(sql, [user_name, photo_url, lat, lng, os, browser, checkin_time], function(err) {
-            if (err) return res.status(500).json({ error: 'Database Write Failed' });
-            res.json({ message: 'success', id: this.lastID, url: photo_url });
+        const stmt = db.prepare(`INSERT INTO sub_tasks (order_id, sub_name, log_data) VALUES (?, ?, ?)`);
+        subTasks.forEach(name => {
+            stmt.run(orderId, name, JSON.stringify({ photos: [], remark: "" }));
         });
-    } catch (error) {
-        console.error('签到失败:', error);
-        res.status(500).json({ error: 'Server Internal Error' });
-    }
+        stmt.finalize();
+        
+        res.json({ success: true, orderId });
+    });
 });
 
-// 4. 签名并合成 PDF API
+// --- API 2: 获取工单详情 (包含子任务) ---
+app.get('/api/work-orders/:id', (req, res) => {
+    const orderId = req.params.id;
+    db.get(`SELECT * FROM work_orders WHERE id = ?`, [orderId], (err, order) => {
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        db.all(`SELECT * FROM sub_tasks WHERE order_id = ?`, [orderId], (err, subs) => {
+            order.sub_tasks = subs.map(s => ({ ...s, log_data: JSON.parse(s.log_data) }));
+            res.json(order);
+        });
+    });
+});
+
+// --- API 3: 更新子任务进度 (上传照片/备注) ---
+app.post('/api/sub-tasks/:id/update', upload.array('photos'), async (req, res) => {
+    const subId = req.params.id;
+    const { remark, status } = req.body;
+    let photoUrls = [];
+
+    try {
+        if (req.files) {
+            for (const file of req.files) {
+                const fileName = `task_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.jpg`;
+                await r2.send(new PutObjectCommand({
+                    Bucket: process.env.R2_BUCKET_NAME, Key: fileName,
+                    Body: file.buffer, ContentType: 'image/jpeg'
+                }));
+                photoUrls.push(`${process.env.R2_PUBLIC_URL}/${fileName}`);
+            }
+        }
+
+        db.get(`SELECT log_data FROM sub_tasks WHERE id = ?`, [subId], (err, row) => {
+            const data = JSON.parse(row.log_data);
+            data.photos.push(...photoUrls);
+            data.remark = remark || data.remark;
+            
+            db.run(`UPDATE sub_tasks SET status = ?, log_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [status || 'RUNNING', JSON.stringify(data), subId], () => {
+                res.json({ success: true, photos: data.photos });
+            });
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- 原有 PDF 接口 (稍作优化，关联 orderId) ---
 app.post('/api/save-signature', async (req, res) => {
     try {
-        const { user, task, signatureBase64 } = req.body;
-
-        // A. 读取本地 PDF 模板
+        const { user, task, signatureBase64, orderId } = req.body;
         const templatePath = path.join(__dirname, 'assets', '技术安全交底告知书.pdf');
         const existingPdfBytes = fs.readFileSync(templatePath);
         const pdfDoc = await PDFDocument.load(existingPdfBytes);
+        const signatureImage = await pdfDoc.embedPng(Buffer.from(signatureBase64.split(',')[1], 'base64'));
+        const secondPage = pdfDoc.getPages()[1];
+        secondPage.drawImage(signatureImage, { x: 400, y: 100, width: 150, height: 75 });
 
-        // B. 处理签名图片 (去掉 Base64 头部)
-        const signatureImageBytes = Buffer.from(signatureBase64.split(',')[1], 'base64');
-        const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
-
-        // C. 在第二页嵌入签名
-        const pages = pdfDoc.getPages();
-        const secondPage = pages[1]; // 索引从0开始，1代表第二页
-        
-        // 预设坐标 (x, y)，根据PDF实际大小调整
-        secondPage.drawImage(signatureImage, {
-            x: 400,
-            y: 100,
-            width: 150,
-            height: 75,
-        });
-
-        // D. 保存并上传 R2
         const pdfBytes = await pdfDoc.save();
         const fileName = `signed_${Date.now()}.pdf`;
-
         await r2.send(new PutObjectCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
-            Key: fileName,
-            Body: pdfBytes,
-            ContentType: 'application/pdf',
+            Bucket: process.env.R2_BUCKET_NAME, Key: fileName,
+            Body: pdfBytes, ContentType: 'application/pdf'
         }));
 
         const pdf_url = `${process.env.R2_PUBLIC_URL}/${fileName}`;
-        console.log(`[PDF签署成功] 用户: ${user}, URL: ${pdf_url}`);
-        
+        // 更新工单状态
+        if (orderId) {
+            db.run(`UPDATE work_orders SET status = 'IN_PROGRESS', safety_pdf_url = ? WHERE id = ?`, [pdf_url, orderId]);
+        }
         res.json({ success: true, pdf_url });
-    } catch (error) {
-        console.error('PDF合成错误:', error); 
-        res.status(500).json({ error: 'PDF Generation Failed' });
-    }
+    } catch (error) { res.status(500).json({ error: 'PDF Failed' }); }
 });
 
 app.listen(PORT, '127.0.0.1', () => {
-    console.log(`M&O Backend running at http://127.0.0.1:${PORT}`);
+    console.log(`M&O Backend v1.3 running at http://127.0.0.1:${PORT}`);
 });
