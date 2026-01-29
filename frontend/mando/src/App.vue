@@ -33,57 +33,71 @@
           </div>
           <button @click="handleLogout" class="logout-link">安全退出</button>
         </header>
-
-        <div class="mo-tags-section" style="border:none; padding:0; margin-bottom:20px;">
-          <div class="tag-container">
-            <span v-for="tag in userTags" :key="tag" class="mo-tag">{{ tag }}</span>
-          </div>
-        </div>
-
         <h2 style="text-align: left; margin-bottom: 20px;">任务选择</h2>
         <div class="workflow-grid">
           <div @click="handleTask('日常任务')" class="flow-item">
-            <div class="icon">📋</div>
-            <span>日常任务</span>
+            <div class="icon">📋</div><span>日常任务</span>
           </div>
           <div @click="handleTask('柴机维保')" class="flow-item">
-            <div class="icon">⚙️</div>
-            <span>柴机维保</span>
+            <div class="icon">⚙️</div><span>柴机维保</span>
           </div>
           <div @click="handleTask('擦窗机维保')" class="flow-item">
-            <div class="icon">🏗️</div>
-            <span>擦窗机维保</span>
+            <div class="icon">🏗️</div><span>擦窗机维保</span>
           </div>
           <div @click="handleTask('旋转门维保')" class="flow-item">
-            <div class="icon">🚪</div>
-            <span>旋转门维保</span>
+            <div class="icon">🚪</div><span>旋转门维保</span>
           </div>
         </div>
       </section>
 
       <section v-if="currentStep === 'camera'" class="mo-card">
-        <div class="workflow-header">
-           <span>当前任务：<strong>{{ activeTask }}</strong></span>
-           <button @click="currentStep = 'workflow'" class="logout-link" style="color:var(--primary)">取消</button>
-        </div>
-        <h2>真人识别埋点</h2>
-        <p style="font-size:12px; color:#666; margin-bottom:15px;">开始任务前，请完成现场拍照存证</p>
+        <h2>现场存证</h2>
         <div class="video-container">
           <video ref="videoPlayer" autoplay playsinline class="mo-video"></video>
         </div>
-        <button @click="captureAndSubmit" class="mo-btn success">立即拍摄并开始任务</button>
+        <button @click="captureAndSubmit" class="mo-btn success">拍摄并进入安全教育</button>
+      </section>
+
+      <section v-if="currentStep === 'safety'" class="mo-card">
+        <h2>安全教育视频</h2>
+        <p style="font-size:12px; color:#ef4444; margin-bottom:10px;">* 必须完整观看视频方可签署告知书</p>
+        <div class="video-container">
+          <iframe 
+            width="100%" height="100%" 
+            src="https://www.youtube.com/embed/E7HsXbtcHhM?enablejsapi=1&rel=0" 
+            frameborder="0" allowfullscreen
+          ></iframe>
+        </div>
+        <button @click="currentStep = 'signature'" class="mo-btn primary">我已观看并去签署告知书</button>
+      </section>
+
+      <section v-if="currentStep === 'signature'" class="mo-card">
+        <h2>技术安全交底签署</h2>
+        <p style="font-size:12px; color:#666; margin-bottom:10px;">请在下方空白处横向签署姓名</p>
+        <div class="sig-wrapper">
+          <canvas 
+            ref="sigCanvas" 
+            @touchstart="startDrawing" 
+            @touchmove="draw" 
+            @touchend="stopDrawing"
+            class="sig-canvas"
+          ></canvas>
+        </div>
+        <div class="mo-btn-group" style="display:flex; gap:10px; margin-top:15px;">
+          <button @click="clearCanvas" class="mo-btn" style="background:#6b7280; color:white;">重写</button>
+          <button @click="submitSignature" class="mo-btn success">确认提交并生成PDF</button>
+        </div>
       </section>
 
       <section v-if="currentStep === 'result'" class="mo-card result">
         <div class="success-icon">✓</div>
-        <h2>存证成功</h2>
+        <h2>流程已开启</h2>
         <div class="detail-list">
           <div class="item"><strong>人员:</strong> {{ loginForm.user }}</div>
           <div class="item"><strong>任务:</strong> {{ activeTask }}</div>
-          <div class="item"><strong>坐标:</strong> {{ location.lat.toFixed(4) }}, {{ location.lng.toFixed(4) }}</div>
+          <div class="item"><strong>PDF凭证:</strong> <a :href="signedPdfUrl" target="_blank">查看签署文件</a></div>
         </div>
-        <img :src="finalPhoto" class="mo-photo" />
-        <button @click="currentStep = 'workflow'" class="mo-btn primary" style="margin-top:20px">返回工作台</button>
+        <button @click="currentStep = 'workflow'" class="mo-btn primary">返回工作台</button>
       </section>
     </main>
   </div>
@@ -92,26 +106,24 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 
-// 状态控制
 const currentStep = ref('login')
 const activeTask = ref('')
 const loginForm = reactive({ user: '张三', pass: '' })
 const location = reactive({ lat: 0, lng: 0 })
-const deviceInfo = reactive({ os: '', browser: '' })
-const checkinTime = ref('')
+const signedPdfUrl = ref('')
 const finalPhoto = ref('')
 const userTags = ref([])
 const videoPlayer = ref(null)
+const sigCanvas = ref(null)
 let streamInstance = null
+let isDrawing = false
 
-// 用户配置
 const USER_CONFIG = {
   '张三': { tags: ['系统设置', '全量审计', '卡园监控', '集电港监控', '科技园监控'] },
   '李四': { tags: ['卡园监控', '资产管理'] },
   '王五': { tags: ['科技园监控', '资产管理'] }
 }
 
-// 登录拦截逻辑：利用 localStorage 实现持久化
 onMounted(() => {
   const isAuth = localStorage.getItem('mando_auth')
   if (isAuth === 'true') {
@@ -121,43 +133,26 @@ onMounted(() => {
   }
 })
 
-const getFingerprint = () => {
-  const ua = navigator.userAgent
-  deviceInfo.os = /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : /Android/i.test(ua) ? 'Android' : 'PC'
-  deviceInfo.browser = /MicroMessenger/i.test(ua) ? 'WeChat' : /Chrome/i.test(ua) ? 'Chrome' : 'Browser'
-}
-
 const handleLogin = () => {
   if (loginForm.pass !== 'admin') return alert('口令错误')
-  
-  // 存储身份信息到本地
   localStorage.setItem('mando_auth', 'true')
   localStorage.setItem('mando_user', loginForm.user)
   userTags.value = USER_CONFIG[loginForm.user].tags
   localStorage.setItem('mando_tags', JSON.stringify(userTags.value))
-  
   currentStep.value = 'workflow'
 }
 
 const handleLogout = () => {
-  localStorage.clear()
-  currentStep.value = 'login'
-  loginForm.pass = ''
+  localStorage.clear(); currentStep.value = 'login'; loginForm.pass = ''
 }
 
-// 点击任务：触发位置获取和摄像头
 const handleTask = (name) => {
   activeTask.value = name
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      location.lat = pos.coords.latitude
-      location.lng = pos.coords.longitude
-      getFingerprint()
-      currentStep.value = 'camera'
-      startCamera()
-    },
-    () => alert('请授权位置信息，否则无法开启任务')
-  )
+  navigator.geolocation.getCurrentPosition((pos) => {
+    location.lat = pos.coords.latitude; location.lng = pos.coords.longitude
+    currentStep.value = 'camera'
+    startCamera()
+  }, () => alert('请授权位置信息'))
 }
 
 const startCamera = async () => {
@@ -169,33 +164,63 @@ const startCamera = async () => {
 
 const captureAndSubmit = async () => {
   const canvas = document.createElement('canvas')
-  canvas.width = videoPlayer.value.videoWidth
-  canvas.height = videoPlayer.value.videoHeight
+  canvas.width = videoPlayer.value.videoWidth; canvas.height = videoPlayer.value.videoHeight
   const ctx = canvas.getContext('2d')
-  ctx.translate(canvas.width, 0); ctx.scale(-1, 1)
-  ctx.drawImage(videoPlayer.value, 0, 0)
-  
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
-  finalPhoto.value = dataUrl
-  checkinTime.value = new Date().toLocaleString()
-
-  try {
-    const blob = await (await fetch(dataUrl)).blob()
-    const fd = new FormData()
-    fd.append('photo', blob, 'task_checkin.jpg')
-    fd.append('user_name', `${loginForm.user}(${activeTask.value})`) // 记录具体任务签到
-    fd.append('lat', location.lat); fd.append('lng', location.lng)
-    fd.append('os', deviceInfo.os); fd.append('browser', deviceInfo.browser)
-    fd.append('checkin_time', checkinTime.value)
-    await fetch('/api/checkin', { method: 'POST', body: fd })
-  } catch (err) { console.error('同步失败') }
+  ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(videoPlayer.value, 0, 0)
+  finalPhoto.value = canvas.toDataURL('image/jpeg', 0.8)
 
   if (streamInstance) streamInstance.getTracks().forEach(t => t.stop())
-  currentStep.value = 'result'
+  currentStep.value = 'safety' // 拍照后进入安全教育
+}
+
+// 签名逻辑实现
+const startDrawing = (e) => {
+  isDrawing = true
+  const ctx = sigCanvas.value.getContext('2d')
+  ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#000'
+  const rect = sigCanvas.value.getBoundingClientRect()
+  ctx.beginPath()
+  ctx.moveTo(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top)
+}
+
+const draw = (e) => {
+  if (!isDrawing) return
+  const ctx = sigCanvas.value.getContext('2d')
+  const rect = sigCanvas.value.getBoundingClientRect()
+  ctx.lineTo(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top)
+  ctx.stroke()
+}
+
+const stopDrawing = () => { isDrawing = false }
+
+const clearCanvas = () => {
+  const ctx = sigCanvas.value.getContext('2d')
+  ctx.clearRect(0, 0, sigCanvas.value.width, sigCanvas.value.height)
+}
+
+const submitSignature = async () => {
+  const sigBase64 = sigCanvas.value.toDataURL('image/png')
+  try {
+    const res = await fetch('/api/save-signature', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: loginForm.user,
+        task: activeTask.value,
+        signatureBase64: sigBase64
+      })
+    })
+    const data = await res.json()
+    if (data.success) {
+      signedPdfUrl.value = data.pdf_url
+      currentStep.value = 'result'
+    }
+  } catch (e) { alert('生成PDF失败') }
 }
 </script>
 
 <style>
+/* 继承之前的样式并新增签名样式 */
 :root { --primary: #2563eb; --success: #16a34a; --bg: #f3f4f6; --dark: #1f2937; }
 body { margin: 0; background: var(--bg); font-family: -apple-system, sans-serif; }
 .mo-header { background: var(--dark); color: white; padding: 20px; text-align: center; }
@@ -206,27 +231,17 @@ body { margin: 0; background: var(--bg); font-family: -apple-system, sans-serif;
 .mo-btn.primary { background: var(--primary); color: white; }
 .mo-btn.success { background: var(--success); color: white; }
 
-.video-container { width: 100%; aspect-ratio: 3/4; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
+.video-container { width: 100%; aspect-ratio: 9/16; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
 .mo-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-.mo-photo { width: 100%; border-radius: 8px; margin-top: 15px; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
 
-.detail-list { background: #f9fafb; padding: 12px; border-radius: 8px; text-align: left; font-size: 14px; margin-bottom: 15px; }
-.mo-tags-section { border-top: 1px dashed #ddd; padding-top: 10px; text-align: left; }
-.tag-container { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.mo-tag { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+.sig-wrapper { width: 100%; height: 200px; background: #f9fafb; border: 2px dashed #d1d5db; border-radius: 8px; touch-action: none; }
+.sig-canvas { width: 100%; height: 100%; }
 
-.workflow-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
-.user-status { font-size: 14px; display: flex; align-items: center; }
-.status-dot { width: 8px; height: 8px; background: var(--success); border-radius: 50%; margin-right: 6px; }
-.logout-link { background: none; border: none; color: #ef4444; font-size: 14px; cursor: pointer; }
+.workflow-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+.status-dot { width: 8px; height: 8px; background: var(--success); border-radius: 50%; display: inline-block; margin-right: 5px; }
+.logout-link { background: none; border: none; color: #ef4444; font-size: 14px; }
 .workflow-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-.flow-item { 
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 20px;
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: all 0.2s;
-}
-.flow-item:active { transform: scale(0.95); background: #f9fafb; }
-.flow-item .icon { font-size: 32px; }
-.flow-item span { font-weight: 600; color: var(--dark); font-size: 14px; }
-.success-icon { font-size: 40px; color: var(--success); text-align: center; }
+.flow-item { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.flow-item .icon { font-size: 30px; }
+.mo-tag { background: #e0e7ff; color: #4338ca; padding: 4px 10px; border-radius: 12px; font-size: 11px; margin: 2px; display: inline-block; }
 </style>
