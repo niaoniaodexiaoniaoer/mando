@@ -33,9 +33,19 @@ const handleLogin = async () => {
     
     const data = await response.json();
     if (data.success) {
-      // 登录成功，跳转到移动端首页
-      console.log('登录成功:', data.user);
-      router.push('/mobile/home');
+      // 1. 核心：将包含 role_key 的用户信息存入本地缓存，供路由守卫校验
+      localStorage.setItem('user', JSON.stringify(data.user));
+      
+      console.log('登录成功，用户信息:', data.user);
+
+      // 2. 动态跳转逻辑
+      if (data.user.role_key === 'ADMIN') {
+        // 如果是管理员，进入 PC 端管理后台
+        router.push('/admin');
+      } else {
+        // 其他角色进入移动端首页
+        router.push('/mobile/home');
+      }
     } else {
       alert(data.message || '登录失败');
     }
@@ -63,31 +73,39 @@ const handleLogin = async () => {
   font-weight: 900;
   text-align: center;
   margin-bottom: 80px;
-  letter-spacing: 6px;
+  letter-spacing: -2px;
+  color: #000;
 }
-.mo-input-group {
-  margin-bottom: 25px;
-  border-bottom: 2px solid #000;
+.mo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 .mo-input {
   width: 100%;
-  height: 50px;
+  padding: 15px 0;
   border: none;
+  border-bottom: 1px solid #eee;
+  font-size: 16px;
   outline: none;
-  font-size: 18px;
-  padding: 0 5px;
+  transition: border-color 0.3s;
+}
+.mo-input:focus {
+  border-bottom-color: #000;
 }
 .mo-login-btn {
-  width: 100%;
-  height: 55px;
+  margin-top: 40px;
   background: #000;
   color: #fff;
   border: none;
+  padding: 18px;
   border-radius: 4px;
-  font-size: 18px;
-  font-weight: bold;
-  margin-top: 40px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
   box-shadow: 0 10px 20px rgba(0,0,0,0.1);
 }
-.mo-login-btn:active { transform: scale(0.97); }
+.mo-login-btn:active {
+  transform: scale(0.98);
+}
 </style>
