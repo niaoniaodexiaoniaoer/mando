@@ -43,7 +43,10 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT, role_key TEXT)`);
 });
 
-// --- 1. 认证接口 ---
+// ==========================================
+// --- 1. 认证接口 (Auth APIs) ---
+// ==========================================
+
 app.post('/api/auth/verify-account', (req, res) => {
     const { username, password } = req.body;
     const sql = `
@@ -66,7 +69,6 @@ app.post('/api/auth/verify-account', (req, res) => {
 app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) => {
     const { user_id, username, real_name, status, location } = req.body;
     const photo = req.file;
-
     try {
         const key = `logs/${Date.now()}-${username}.jpg`;
         await r2.send(new PutObjectCommand({
@@ -76,48 +78,34 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
             ContentType: 'image/jpeg',
         }));
 
-        // [2026-02-10 修订] 统一使用 .env 中的 R2_PUBLIC_URL 变量
+        // [2026-02-10 修订] 统一使用 R2_PUBLIC_URL 变量
         const photo_url = `${process.env.R2_PUBLIC_URL}/${key}`;
 
-        db.get(`
-            SELECT u.*, r.role_key 
-            FROM users u 
-            JOIN roles r ON u.role_id = r.id 
-            WHERE u.id = ?`, [user_id], (err, user) => {
-
-            // [2026-02-10 修订] 增加对 db.run 的错误捕获回调，确保写入失败时能向前端反馈
+        db.get(`SELECT u.*, r.role_key FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?`, [user_id], (err, user) => {
             db.run(
                 "INSERT INTO login_logs (user_id, username, real_name, photo_url, status, location) VALUES (?,?,?,?,?,?)",
                 [user_id, username, real_name, photo_url, status, location],
                 (dbErr) => {
-                    if (dbErr) {
-                        console.error('Log insert error:', dbErr);
-                        return res.json({ success: false, message: '日志写入失败' });
-                    }
+                    if (dbErr) return res.json({ success: false, message: '日志写入失败' });
                     res.json({
                         success: true,
-                        user: {
-                            id: user.id,
-                            username: user.username,
-                            real_name: user.real_name,
-                            role_key: user.role_key
-                        }
+                        user: { id: user.id, username: user.username, real_name: user.real_name, role_key: user.role_key }
                     });
                 }
             );
         });
     } catch (error) {
-        console.error('Finalize login error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
 
-// --- 2. 管理后台接口 ---
+// ==========================================
+// --- 2. 管理后台接口 (Admin APIs) ---
+// ==========================================
 
-// [2026-02-10 修订] 将 /api/admin/init-data 修改为 /api/admin/options，对齐 Dashboard.vue 第 184 行
+// [2026-02-10 修订] 改为 options 路径并对齐字段名
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
-    // [2026-02-10 修订] 统一 role_name 为 name，方便前端直接使用，匹配 Dashboard.vue 选项渲染
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
         data.roles = r || [];
         db.all("SELECT id, name FROM companies", [], (err, c) => {
@@ -127,7 +115,7 @@ app.get('/api/admin/options', (req, res) => {
     });
 });
 
-// [2026-02-10 修订] 完善返回结构，增加 count 字段，防止 Dashboard.vue 第 21 行报错
+// [2026-02-10 修订] 明确返回 count 字段解决读取 undefined 问题
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
@@ -192,11 +180,18 @@ app.delete('/api/admin/roles/:id', (req, res) => {
     db.run("DELETE FROM roles WHERE id = ?", req.params.id, (err) => res.json({ success: !err }));
 });
 
-// --- 静态文件托管 ---
+// ==========================================
+// --- 3. 静态文件与路由保底 (顺序至关重要) ---
+// ==========================================
+
+// [2026-02-10 修订] 必须先定义 API，再托管静态文件
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// [2026-02-10 修订] 确保保底路由放在所有 API 路由之后，解决 PC 端点击日志返回 HTML 的问题
-app.get(/^\/(?!api).*/, (req, res) => {
+// [2026-02-10 修订] 更安全的保底逻辑，防止拦截 /api
+app.get('*', (req, res) => {
+    if (req.path.startsWith('/api')) {
+        return res.status(404).json({ success: false, message: 'API Not Found' });
+    }
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
