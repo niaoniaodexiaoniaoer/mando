@@ -65,6 +65,8 @@ app.post('/api/auth/verify-account', (req, res) => {
 
 app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) => {
     const { user_id, username, real_name, status, location } = req.body;
+    // 强制对齐前端状态判断：如果 status 是 '正常' 或 'SUCCESS'，统一存为 'SUCCESS'
+    const dbStatus = (status === '正常' || status === 'SUCCESS') ? 'SUCCESS' : 'FAILED';
     const photo = req.file;
     try {
         const key = `logs/${Date.now()}-${username}.jpg`;
