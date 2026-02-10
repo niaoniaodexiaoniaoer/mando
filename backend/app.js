@@ -43,10 +43,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT, role_key TEXT)`);
 });
 
-// ==========================================
-// --- 1. 认证接口 (Auth APIs) ---
-// ==========================================
-
+// --- 1. 认证接口 ---
 app.post('/api/auth/verify-account', (req, res) => {
     const { username, password } = req.body;
     const sql = `
@@ -69,6 +66,7 @@ app.post('/api/auth/verify-account', (req, res) => {
 app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) => {
     const { user_id, username, real_name, status, location } = req.body;
     const photo = req.file;
+
     try {
         const key = `logs/${Date.now()}-${username}.jpg`;
         await r2.send(new PutObjectCommand({
@@ -78,7 +76,6 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
             ContentType: 'image/jpeg',
         }));
 
-        // [2026-02-10 修订] 统一使用 R2_PUBLIC_URL 变量
         const photo_url = `${process.env.R2_PUBLIC_URL}/${key}`;
 
         db.get(`SELECT u.*, r.role_key FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?`, [user_id], (err, user) => {
@@ -99,23 +96,22 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
     }
 });
 
-// ==========================================
-// --- 2. 管理后台接口 (Admin APIs) ---
-// ==========================================
+// --- 2. 管理后台接口 ---
 
-// [2026-02-10 修订] 改为 options 路径并对齐字段名
+// [2026-02-10 修订] 对齐 Dashboard.vue 第 184 行，接口名由 init-data 改为 options
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
+    // [2026-02-10 修订] 将 role_name 重命名为 name，匹配前端选项渲染逻辑
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
         data.roles = r || [];
         db.all("SELECT id, name FROM companies", [], (err, c) => {
             data.companies = c || [];
-            res.json(data); 
+            res.json(data);
         });
     });
 });
 
-// [2026-02-10 修订] 明确返回 count 字段解决读取 undefined 问题
+// [2026-02-10 修订] 增加 count 字段，解决前端 Dashboard-BxEgIrEG.js 报 Cannot read properties of undefined (reading 'count') 的问题
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
@@ -180,18 +176,11 @@ app.delete('/api/admin/roles/:id', (req, res) => {
     db.run("DELETE FROM roles WHERE id = ?", req.params.id, (err) => res.json({ success: !err }));
 });
 
-// ==========================================
-// --- 3. 静态文件与路由保底 (顺序至关重要) ---
-// ==========================================
-
-// [2026-02-10 修订] 必须先定义 API，再托管静态文件
+// --- 静态文件托管 ---
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// [2026-02-10 修订] 适配 Node v24 的通配符写法
-app.get('/:pathMatch(*)*', (req, res) => {
-    if (req.path.startsWith('/api')) {
-        return res.status(404).json({ success: false, message: 'API Not Found' });
-    }
+// [保持原有 Node v24 正则写法不变]
+app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
