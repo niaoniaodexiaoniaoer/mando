@@ -77,29 +77,40 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
             ContentType: 'image/jpeg',
         }));
 
-        const photo_url = `https://${process.env.R2_CUSTOM_DOMAIN}/${key}`;
-        
-        // 修改：在记录日志的同时，查询最新的用户信息返回给前端
+        // 核心修复：匹配你的 .env 变量名
+        const photo_url = `${process.env.R2_PUBLIC_URL}/${key}`;
+
         db.get(`
             SELECT u.*, r.role_key 
             FROM users u 
             JOIN roles r ON u.role_id = r.id 
             WHERE u.id = ?`, [user_id], (err, user) => {
             
+            if (err || !user) {
+                return res.status(500).json({ success: false, message: '用户信息查询失败' });
+            }
+
+            // 修复：增加错误回调捕获
             db.run(
                 "INSERT INTO login_logs (user_id, username, real_name, photo_url, status, location) VALUES (?,?,?,?,?,?)",
-                [user_id, username, real_name, photo_url, status, location]
-            );
-
-            res.json({ 
-                success: true, 
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    real_name: user.real_name,
-                    role_key: user.role_key // 确保前端能拿到这个 key
+                [user_id, username, real_name, photo_url, status, location],
+                (dbErr) => {
+                    if (dbErr) {
+                        console.error('Database Insert Error:', dbErr);
+                        return res.json({ success: false, message: '日志写入失败' });
+                    }
+                    
+                    res.json({ 
+                        success: true, 
+                        user: {
+                            id: user.id,
+                            username: user.username,
+                            real_name: user.real_name,
+                            role_key: user.role_key
+                        }
+                    });
                 }
-            });
+            );
         });
     } catch (error) {
         console.error('Finalize login error:', error);
