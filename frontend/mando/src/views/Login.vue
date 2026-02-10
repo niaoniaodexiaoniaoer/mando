@@ -111,23 +111,20 @@ const captureAndLogin = async () => {
     
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
 
-    // --- [优化修改开始]：严格获取 GPS 坐标，失败则记录失败状态 ---
+    // --- 获取 GPS 坐标 ---
     let locationStr = '等待获取...'; 
     try {
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
-          timeout: 6000, // 给 GPS 稍长一点的反应时间（6秒）
-          enableHighAccuracy: true // 开启高精度模式
+          timeout: 6000, 
+          enableHighAccuracy: true 
         });
       });
-      // 成功获取：记录精准坐标
       locationStr = `经度:${position.coords.longitude.toFixed(6)}, 纬度:${position.coords.latitude.toFixed(6)}`;
     } catch (e) {
       console.warn('GPS 采集失败:', e.message);
-      // 失败获取：不使用默认值，直接记录错误原因，便于后台排查异地登录
       locationStr = `获取位置失败 (${e.message || '超时或无权限'})`;
     }
-    // --- [优化修改结束] ---
 
     // 构建提交表单
     const formData = new FormData();
@@ -138,18 +135,31 @@ const captureAndLogin = async () => {
     formData.append('status', '正常');
     formData.append('location', locationStr); 
 
+    // 发送登录请求
     const res = await axios.post('/api/auth/finalize-login', formData);
     
     if (res.data.success) {
+      // 登录成功，清理资源
       stopCamera();
-      if (userInfo.value.role_key === 'admin') {
+      
+      // 存储用户信息和 Token (如果后端返回了的话)
+      localStorage.setItem('user', JSON.stringify(res.data.user));
+      
+      // 获取角色并转为大写判断
+      const userRole = res.data.user.role_key ? res.data.user.role_key.toUpperCase() : '';
+      
+      if (userRole === 'ADMIN') {
         router.push('/admin');
       } else {
-        router.push('/dashboard');
+        // 对应 index.js 中配置的 LB 用户路径
+        router.push('/mobile/home');
       }
+    } else {
+      alert('登录验证失败: ' + (res.data.message || '原因未知'));
     }
   } catch (error) {
-    alert('登录失败: ' + error.message);
+    console.error('Login Error:', error);
+    alert('系统错误: ' + (error.response?.data?.message || error.message));
   } finally {
     isUploading.value = false;
   }
