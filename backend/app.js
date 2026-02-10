@@ -43,7 +43,10 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT, role_key TEXT)`);
 });
 
-// --- 1. 认证接口 ---
+// ==========================================
+// --- 1. 认证接口 (Auth APIs) ---
+// ==========================================
+
 app.post('/api/auth/verify-account', (req, res) => {
     const { username, password } = req.body;
     const sql = `
@@ -93,9 +96,11 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
     }
 });
 
-// --- 2. 管理后台接口 ---
+// ==========================================
+// --- 2. 管理后台接口 (Admin APIs) ---
+// ==========================================
 
-// [2026-02-10 修订] 接口路径改为 options，角色名映射为 name
+// [修订] 接口名对齐 Dashboard.vue，角色名映射为 name
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
@@ -107,7 +112,7 @@ app.get('/api/admin/options', (req, res) => {
     });
 });
 
-// [2026-02-10 修订] 返回对象结构，包含 count 字段，解决前端白屏
+// [修订] 核心修复：必须返回包含 count 的对象，解决前端渲染崩溃
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
@@ -164,7 +169,6 @@ app.get('/api/admin/roles', (req, res) => {
 });
 
 app.post('/api/admin/roles', (req, res) => {
-    // [2026-02-10 修订] 已修复上一版的转义符语法错误
     db.run("INSERT INTO roles (role_name, role_key) VALUES (?,?)", [req.body.role_name, req.body.role_key], (err) => res.json({ success: !err }));
 });
 
@@ -173,10 +177,15 @@ app.delete('/api/admin/roles/:id', (req, res) => {
     db.run("DELETE FROM roles WHERE id = ?", req.params.id, (err) => res.json({ success: !err }));
 });
 
-// --- 静态文件托管 ---
+// ==========================================
+// --- 3. 静态文件与路由保底 (顺序调整) ---
+// ==========================================
+
+// [核心修订] 先托管静态文件，但不让它拦截 API
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// [2026-02-10 修订] 严格保留你环境中的 Node v24 兼容正则表达式
+// [核心修订] 适配 Node v24 和 Express 5 的正则保底路由
+// 只拦截非 API 请求并返回 index.html
 app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
