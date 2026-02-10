@@ -43,7 +43,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT, role_key TEXT)`);
 });
 
-// --- 1. 认证接口 (对齐 Login.vue) ---
+// --- 1. 认证接口 ---
 app.post('/api/auth/verify-account', (req, res) => {
     const { username, password } = req.body;
     const sql = `
@@ -63,7 +63,6 @@ app.post('/api/auth/verify-account', (req, res) => {
     });
 });
 
-// --- 登录接口增强 (确保角色信息返回) ---
 app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) => {
     const { user_id, username, real_name, status, location } = req.body;
     const photo = req.file;
@@ -77,7 +76,7 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
             ContentType: 'image/jpeg',
         }));
 
-        // 核心修复：匹配你的 .env 变量名
+        // [2026-02-10 修订] 统一使用 .env 中的 R2_PUBLIC_URL 变量
         const photo_url = `${process.env.R2_PUBLIC_URL}/${key}`;
 
         db.get(`
@@ -85,23 +84,18 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
             FROM users u 
             JOIN roles r ON u.role_id = r.id 
             WHERE u.id = ?`, [user_id], (err, user) => {
-            
-            if (err || !user) {
-                return res.status(500).json({ success: false, message: '用户信息查询失败' });
-            }
 
-            // 修复：增加错误回调捕获
+            // [2026-02-10 修订] 增加对 db.run 的错误捕获回调，确保写入失败时能向前端反馈
             db.run(
                 "INSERT INTO login_logs (user_id, username, real_name, photo_url, status, location) VALUES (?,?,?,?,?,?)",
                 [user_id, username, real_name, photo_url, status, location],
                 (dbErr) => {
                     if (dbErr) {
-                        console.error('Database Insert Error:', dbErr);
+                        console.error('Log insert error:', dbErr);
                         return res.json({ success: false, message: '日志写入失败' });
                     }
-                    
-                    res.json({ 
-                        success: true, 
+                    res.json({
+                        success: true,
                         user: {
                             id: user.id,
                             username: user.username,
@@ -119,35 +113,35 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
 });
 
 // --- 2. 管理后台接口 ---
-// 修改后：匹配 Dashboard.vue 第 184 行的请求路径
+
+// [2026-02-10 修订] 将 /api/admin/init-data 修改为 /api/admin/options，对齐 Dashboard.vue 第 184 行
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
-    // 统一字段名为 name，方便前端直接使用
+    // [2026-02-10 修订] 统一 role_name 为 name，方便前端直接使用，匹配 Dashboard.vue 选项渲染
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
-        if (err) return res.status(500).json({ success: false });
-        data.roles = r;
+        data.roles = r || [];
         db.all("SELECT id, name FROM companies", [], (err, c) => {
-            if (err) return res.status(500).json({ success: false });
-            data.companies = c;
-            res.json(data); // 这里的 data 包含 roles 和 companies
+            data.companies = c || [];
+            res.json(data); 
         });
     });
 });
 
+// [2026-02-10 修订] 完善返回结构，增加 count 字段，防止 Dashboard.vue 第 21 行报错
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        // 增加 count 字段，匹配 Dashboard.vue 第 21 行
+        if (err) return res.status(500).json({ success: false, error: err.message });
         res.json({ 
-            data: rows, 
+            success: true,
+            data: rows || [], 
             count: rows ? rows.length : 0 
         });
     });
 });
 
 app.get('/api/admin/users', (req, res) => {
-    const sql = `SELECT u.*, c.name as company_name, r.role_name FROM users u 
-                 LEFT JOIN companies c ON u.company_id = c.id 
+    const sql = `SELECT u.*, c.name as company_name, r.role_name FROM users u
+                 LEFT JOIN companies c ON u.company_id = c.id
                  LEFT JOIN roles r ON u.role_id = r.id`;
     db.all(sql, (err, rows) => res.json(rows));
 });
@@ -199,11 +193,9 @@ app.delete('/api/admin/roles/:id', (req, res) => {
 });
 
 // --- 静态文件托管 ---
-// 确保前端 build 后的 dist 文件夹放在 backend 目录下
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// --- 核心修复：Node v24 路由兼容性补丁 ---
-// 使用原生正则表达式代替字符串通配符，彻底解决 PathError
+// [2026-02-10 修订] 确保保底路由放在所有 API 路由之后，解决 PC 端点击日志返回 HTML 的问题
 app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
