@@ -95,7 +95,6 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
 
 // --- 2. 管理后台接口 ---
 
-// [修订] 对齐 Dashboard.vue 第 184 行对 options 的结构和字段名需求
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
@@ -107,10 +106,10 @@ app.get('/api/admin/options', (req, res) => {
     });
 });
 
-// [核心修复] 必须返回包含 count 的对象，以适配前端 logProbe.count = res.data.count
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
+        // 核心修复：保持对象结构以包含 count 字段
         res.json({
             success: true,
             data: rows || [],
@@ -164,7 +163,7 @@ app.get('/api/admin/roles', (req, res) => {
 });
 
 app.post('/api/admin/roles', (req, res) => {
-    db.run("INSERT INTO roles (role_name, role_key) VALUES (?,?)\", [req.body.role_name, req.body.role_key], (err) => res.json({ success: !err }));
+    db.run("INSERT INTO roles (role_name, role_key) VALUES (?,?)", [req.body.role_name, req.body.role_key], (err) => res.json({ success: !err }));
 });
 
 app.delete('/api/admin/roles/:id', (req, res) => {
@@ -175,6 +174,7 @@ app.delete('/api/admin/roles/:id', (req, res) => {
 // --- 3. 静态文件处理 (API 优先) ---
 app.use(express.static(path.join(__dirname, 'dist')));
 
+// 严格保持 Node v24 兼容的正则表达式
 app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
