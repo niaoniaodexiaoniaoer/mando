@@ -119,12 +119,17 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
 });
 
 // --- 2. 管理后台接口 ---
-app.get('/api/admin/init-data', (req, res) => {
-    const data = {};
+// 修改后：匹配 Dashboard.vue 第 184 行的请求路径
+app.get('/api/admin/options', (req, res) => {
+    const data = { roles: [], companies: [] };
+    // 统一字段名为 name，方便前端直接使用
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
+        if (err) return res.status(500).json({ success: false });
         data.roles = r;
         db.all("SELECT id, name FROM companies", [], (err, c) => {
-            data.companies = c; res.json(data);
+            if (err) return res.status(500).json({ success: false });
+            data.companies = c;
+            res.json(data); // 这里的 data 包含 roles 和 companies
         });
     });
 });
@@ -132,7 +137,11 @@ app.get('/api/admin/init-data', (req, res) => {
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ data: rows });
+        // 增加 count 字段，匹配 Dashboard.vue 第 21 行
+        res.json({ 
+            data: rows, 
+            count: rows ? rows.length : 0 
+        });
     });
 });
 
