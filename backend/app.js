@@ -63,31 +63,47 @@ app.post('/api/auth/verify-account', (req, res) => {
     });
 });
 
+// --- 登录接口增强 (确保角色信息返回) ---
 app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) => {
+    const { user_id, username, real_name, status, location } = req.body;
+    const photo = req.file;
+
     try {
-        const { user_id, username, real_name, status, location } = req.body;
-        let photoUrl = '';
-        if (req.file) {
-            const fileKey = `logins/${Date.now()}-${username}.jpg`;
-            await r2.send(new PutObjectCommand({
-                Bucket: process.env.R2_BUCKET_NAME,
-                Key: fileKey,
-                Body: req.file.buffer,
-                ContentType: 'image/jpeg',
-            }));
-            photoUrl = `${process.env.R2_CUSTOM_DOMAIN}/${fileKey}`;
-        }
-        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        db.run(
-            `INSERT INTO login_logs (user_id, username, real_name, photo_url, location, status, ip_address) VALUES (?,?,?,?,?,?,?)`,
-            [user_id, username, real_name, photoUrl, location, status, ip],
-            (err) => {
-                if (err) return res.status(500).json({ success: false, message: '日志写入失败' });
-                res.json({ success: true });
-            }
-        );
+        const key = `logs/${Date.now()}-${username}.jpg`;
+        await r2.send(new PutObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: key,
+            Body: photo.buffer,
+            ContentType: 'image/jpeg',
+        }));
+
+        const photo_url = `https://${process.env.R2_CUSTOM_DOMAIN}/${key}`;
+        
+        // 修改：在记录日志的同时，查询最新的用户信息返回给前端
+        db.get(`
+            SELECT u.*, r.role_key 
+            FROM users u 
+            JOIN roles r ON u.role_id = r.id 
+            WHERE u.id = ?`, [user_id], (err, user) => {
+            
+            db.run(
+                "INSERT INTO login_logs (user_id, username, real_name, photo_url, status, location) VALUES (?,?,?,?,?,?)",
+                [user_id, username, real_name, photo_url, status, location]
+            );
+
+            res.json({ 
+                success: true, 
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    real_name: user.real_name,
+                    role_key: user.role_key // 确保前端能拿到这个 key
+                }
+            });
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: '服务器错误' });
+        console.error('Finalize login error:', error);
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 
@@ -162,13 +178,14 @@ app.delete('/api/admin/roles/:id', (req, res) => {
     db.run("DELETE FROM roles WHERE id = ?", req.params.id, (err) => res.json({ success: !err }));
 });
 
-// --- 3. 静态资源托管与兜底 (改用原生正则写法，彻底解决 PathError) ---
-app.use(express.static(path.join(__dirname, '../frontend/mando/dist')));
+// --- 静态文件托管 ---
+// 确保前端 build 后的 dist 文件夹放在 backend 目录下
+app.use(express.static(path.join(__dirname, 'dist')));
 
-// 注意：这里使用了 /^\/(?!api).*/ 正则表达式。
-// 它的意思是：匹配所有不以 /api 开头的路径，将其重定向到 index.html
+// --- 核心修复：Node v24 路由兼容性补丁 ---
+// 使用原生正则表达式代替字符串通配符，彻底解决 PathError
 app.get(/^\/(?!api).*/, (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/mando/dist/index.html'));
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(PORT, () => {
