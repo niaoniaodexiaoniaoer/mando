@@ -43,10 +43,7 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_name TEXT, role_key TEXT)`);
 });
 
-// ==========================================
-// --- 1. 认证接口 (Auth APIs) ---
-// ==========================================
-
+// --- 1. 认证接口 ---
 app.post('/api/auth/verify-account', (req, res) => {
     const { username, password } = req.body;
     const sql = `
@@ -96,11 +93,9 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
     }
 });
 
-// ==========================================
-// --- 2. 管理后台接口 (Admin APIs) ---
-// ==========================================
+// --- 2. 管理后台接口 ---
 
-// [修订] 接口名对齐 Dashboard.vue，角色名映射为 name
+// [修订] 字段名对齐前端：role_name 映射为 name
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
@@ -112,24 +107,12 @@ app.get('/api/admin/options', (req, res) => {
     });
 });
 
-// [修订] 核心修复：必须返回包含 count 的对象，解决前端渲染崩溃
+// [核心修复] 必须回归简单数组模式。前端期待 res.data 是一个数组，从而读取 .length 作为 count。
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
-        
-        const count = rows ? rows.length : 0;
-        const data = rows || [];
-
-        // 冗余返回：既在根节点给 count，也在 data 内部给一个 count
-        // 这样无论前端是读 res.data.count 还是读 res.data.data.count 都能读到
-        res.json({ 
-            success: true,
-            count: count,
-            data: {
-                list: data,
-                count: count // 适配某些可能存在的嵌套读取
-            }
-        });
+        // 直接返回行数组，不要包裹在对象里
+        res.json(rows || []);
     });
 });
 
@@ -186,15 +169,10 @@ app.delete('/api/admin/roles/:id', (req, res) => {
     db.run("DELETE FROM roles WHERE id = ?", req.params.id, (err) => res.json({ success: !err }));
 });
 
-// ==========================================
-// --- 3. 静态文件与路由保底 (顺序调整) ---
-// ==========================================
-
-// [核心修订] 先托管静态文件，但不让它拦截 API
+// --- 3. 静态文件与路由保底 (必须放在所有 API 之后) ---
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// [核心修订] 适配 Node v24 和 Express 5 的正则保底路由
-// 只拦截非 API 请求并返回 index.html
+// 严格保留 Node v24 兼容的正则表达式
 app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
