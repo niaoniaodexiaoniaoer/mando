@@ -116,10 +116,19 @@ app.get('/api/admin/options', (req, res) => {
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
+        
+        const count = rows ? rows.length : 0;
+        const data = rows || [];
+
+        // 冗余返回：既在根节点给 count，也在 data 内部给一个 count
+        // 这样无论前端是读 res.data.count 还是读 res.data.data.count 都能读到
         res.json({ 
             success: true,
-            data: rows || [], 
-            count: rows ? rows.length : 0 
+            count: count,
+            data: {
+                list: data,
+                count: count // 适配某些可能存在的嵌套读取
+            }
         });
     });
 });
