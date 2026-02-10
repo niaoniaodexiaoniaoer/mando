@@ -95,6 +95,7 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
 
 // --- 2. 管理后台接口 ---
 
+// 选项接口：必须返回包含 roles 和 companies 的对象
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
@@ -106,23 +107,28 @@ app.get('/api/admin/options', (req, res) => {
     });
 });
 
+// 日志接口：必须对齐 Dashboard.vue 第 161-163 行要求的 probe 结构
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
-        // 核心修复：保持对象结构以包含 count 字段
         res.json({
             success: true,
             data: rows || [],
-            count: rows ? rows.length : 0
+            probe: {
+                count: rows ? rows.length : 0,
+                triggered: false,
+                message: ''
+            }
         });
     });
 });
 
+// 用户、单位、角色接口：fetchData 逻辑要求非日志接口直接返回数组
 app.get('/api/admin/users', (req, res) => {
     const sql = `SELECT u.*, c.name as company_name, r.role_name FROM users u
                  LEFT JOIN companies c ON u.company_id = c.id
                  LEFT JOIN roles r ON u.role_id = r.id`;
-    db.all(sql, (err, rows) => res.json(rows));
+    db.all(sql, (err, rows) => res.json(rows || []));
 });
 
 app.post('/api/admin/users', (req, res) => {
@@ -142,7 +148,7 @@ app.delete('/api/admin/users/:id', (req, res) => {
 });
 
 app.get('/api/admin/companies', (req, res) => {
-    db.all("SELECT * FROM companies", (err, rows) => res.json(rows));
+    db.all("SELECT * FROM companies", (err, rows) => res.json(rows || []));
 });
 
 app.post('/api/admin/companies', (req, res) => {
@@ -159,7 +165,7 @@ app.delete('/api/admin/companies/:id', (req, res) => {
 });
 
 app.get('/api/admin/roles', (req, res) => {
-    db.all("SELECT * FROM roles", (err, rows) => res.json(rows));
+    db.all("SELECT * FROM roles", (err, rows) => res.json(rows || []));
 });
 
 app.post('/api/admin/roles', (req, res) => {
@@ -174,7 +180,6 @@ app.delete('/api/admin/roles/:id', (req, res) => {
 // --- 3. 静态文件处理 (API 优先) ---
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// 严格保持 Node v24 兼容的正则表达式
 app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
