@@ -132,7 +132,7 @@ const captureAndLogin = async () => {
     formData.append('user_id', userInfo.value.id);
     formData.append('username', userInfo.value.username);
     formData.append('real_name', userInfo.value.real_name);
-    formData.append('status', '正常');
+    formData.append('status', 'SUCCESS');
     formData.append('location', locationStr); 
 
     // 发送登录请求
