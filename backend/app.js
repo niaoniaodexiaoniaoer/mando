@@ -187,8 +187,8 @@ app.delete('/api/admin/roles/:id', (req, res) => {
 // [2026-02-10 修订] 必须先定义 API，再托管静态文件
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// [2026-02-10 修订] 更安全的保底逻辑，防止拦截 /api
-app.get('*', (req, res) => {
+// [2026-02-10 修订] 适配 Node v24 的通配符写法
+app.get('/:pathMatch(*)*', (req, res) => {
     if (req.path.startsWith('/api')) {
         return res.status(404).json({ success: false, message: 'API Not Found' });
     }
