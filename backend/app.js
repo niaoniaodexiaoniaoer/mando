@@ -95,7 +95,7 @@ app.post('/api/auth/finalize-login', upload.single('photo'), async (req, res) =>
 
 // --- 2. 管理后台接口 ---
 
-// [2026-02-10 修订] 确保路径名为 options，且返回对象结构。你目前的代码里还是 init-data
+// [2026-02-10 修订] 接口路径改为 options，角色名映射为 name
 app.get('/api/admin/options', (req, res) => {
     const data = { roles: [], companies: [] };
     db.all("SELECT id, role_name as name FROM roles", [], (err, r) => {
@@ -107,8 +107,7 @@ app.get('/api/admin/options', (req, res) => {
     });
 });
 
-// [2026-02-10 修订] 关键！将 res.json(rows) 修改为包含 count 的对象
-// 这是解决 Dashboard-BxEgIrEG.js 报 Cannot read properties of undefined (reading 'count') 的唯一办法
+// [2026-02-10 修订] 返回对象结构，包含 count 字段，解决前端白屏
 app.get('/api/admin/logs', (req, res) => {
     db.all("SELECT * FROM login_logs ORDER BY login_time DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
@@ -165,7 +164,8 @@ app.get('/api/admin/roles', (req, res) => {
 });
 
 app.post('/api/admin/roles', (req, res) => {
-    db.run("INSERT INTO roles (role_name, role_key) VALUES (?,?)\", [req.body.role_name, req.body.role_key], (err) => res.json({ success: !err }));
+    // [2026-02-10 修订] 已修复上一版的转义符语法错误
+    db.run("INSERT INTO roles (role_name, role_key) VALUES (?,?)", [req.body.role_name, req.body.role_key], (err) => res.json({ success: !err }));
 });
 
 app.delete('/api/admin/roles/:id', (req, res) => {
@@ -176,7 +176,7 @@ app.delete('/api/admin/roles/:id', (req, res) => {
 // --- 静态文件托管 ---
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// [2026-02-10 修订] 严格保留你的 Node v24 兼容正则，不作任何改动
+// [2026-02-10 修订] 严格保留你环境中的 Node v24 兼容正则表达式
 app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
