@@ -5,7 +5,7 @@ node_modules/
 .env.local
 
 # build outputs
-dist/
+frontend/mando/dist/
 build/
 
 # logs
